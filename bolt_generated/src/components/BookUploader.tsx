@@ -85,7 +85,7 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
         .select('id')
         .single();
 
-      if (bookError) {
+      if (bookError || !bookData) {
         throw new Error(`Failed to create book: ${bookError.message}`);
       }
 
@@ -97,35 +97,41 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
         progress: 30
       });
 
-      // Process the PDF file
-      const result = await TextbookProcessor.processPDFFile(
-        selectedFile,
-        bookId,
-        { title: bookTitle, author: bookAuthor }
-      );
+      // Process the PDF file & Save embeddings
+    const result = await TextbookProcessor.processPDFFile(
+      selectedFile,
+      bookId,
+      { title: bookTitle, author: bookAuthor }
+    );
 
-      if (result.success) {
-        setUploadProgress({
-          stage: 'completed',
-          message: `ประมวลผลสำเร็จ! สร้าง ${result.chunksProcessed} ส่วนข้อมูล`,
-          progress: 100
-        });
-
-        setTimeout(() => {
-          onUploadComplete(bookId);
-        }, 2000);
-      } else {
-        throw new Error(result.error || 'การประมวลผลล้มเหลว');
-      }
-    } catch (error) {
-      console.error('Upload error:', error);
-      setUploadProgress({
-        stage: 'error',
-        message: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการอัพโหลด',
-        progress: 0
-      });
+    if (!result.success) {
+      throw new Error('การประมวลผลล้มเหลว');
     }
-  };
+
+    // 3. Update book status to "completed"
+    await supabase
+      .from('books')
+      .update({ processing_status: 'completed' })
+      .eq('id', bookId);
+
+    setUploadProgress({
+      stage: 'completed',
+      message: `ประมวลผลสำเร็จ! สร้าง ${result.chunksProcessed} ส่วนข้อมูล`,
+      progress: 100
+    });
+
+    setTimeout(() => {
+      onUploadComplete(bookId);
+    }, 2000);
+  } catch (error) {
+    console.error('Upload error:', error);
+    setUploadProgress({
+      stage: 'error',
+      message: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการอัพโหลด',
+      progress: 0
+    });
+  }
+};
 
   const resetForm = () => {
     setSelectedFile(null);
