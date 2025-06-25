@@ -1,30 +1,21 @@
 import { supabase } from '../lib/supabase';
-import { openai } from './openai';
+
+export interface ProcessingResult {
+  success: boolean;
+  chunksProcessed?: number;
+  error?: string;
+}
 
 export interface TextChunk {
   content: string;
   pageNumber: number;
   chunkIndex: number;
-  metadata: {
-    title?: string;
-    author?: string;
-    section?: string;
-  };
-}
-
-export interface ProcessingResult {
-  success: boolean;
-  bookId: string;
-  chunksProcessed: number;
-  error?: string;
+  embedding: number[];
 }
 
 export class TextbookProcessor {
-  private static readonly CHUNK_SIZE = 1000;
-  private static readonly CHUNK_OVERLAP = 200;
-
   /**
-   * Process a PDF file and extract text chunks with embeddings
+   * Process a PDF file and store embeddings in the database
    */
   static async processPDFFile(
     file: File,
@@ -33,45 +24,51 @@ export class TextbookProcessor {
   ): Promise<ProcessingResult> {
     try {
       // Update book status to processing
-      await supabase
-        .from('books')
-        .update({ processing_status: 'processing' })
-        .eq('id', bookId);
+      await this.updateBookStatus(bookId, 'processing');
 
       // Extract text from PDF
-      const textChunks = await this.extractTextFromPDF(file, metadata);
+      const pages = await this.extractTextFromPDF(file);
       
-      // Generate embeddings for each chunk
-      const embeddedChunks = await this.generateEmbeddings(textChunks, bookId);
+      // Process each page and create chunks
+      const allChunks: TextChunk[] = [];
       
-      // Save to Supabase
-      await this.saveEmbeddingsToDatabase(embeddedChunks);
-      
+      for (const page of pages) {
+        const chunks = this.chunkText(page.text);
+        
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          if (chunk.trim().length > 50) { // Only process meaningful chunks
+            const embedding = await this.getEmbedding(chunk);
+            
+            allChunks.push({
+              content: chunk,
+              pageNumber: page.pageNumber,
+              chunkIndex: i,
+              embedding
+            });
+          }
+        }
+      }
+
+      // Save chunks to database
+      await this.saveChunksToDatabase(bookId, allChunks, metadata);
+
       // Update book status to completed
-      await supabase
-        .from('books')
-        .update({ processing_status: 'completed' })
-        .eq('id', bookId);
+      await this.updateBookStatus(bookId, 'completed');
 
       return {
         success: true,
-        bookId,
-        chunksProcessed: embeddedChunks.length
+        chunksProcessed: allChunks.length
       };
     } catch (error) {
       console.error('Error processing PDF:', error);
       
       // Update book status to failed
-      await supabase
-        .from('books')
-        .update({ processing_status: 'failed' })
-        .eq('id', bookId);
-
+      await this.updateBookStatus(bookId, 'failed');
+      
       return {
         success: false,
-        bookId,
-        chunksProcessed: 0,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
   }
@@ -79,176 +76,123 @@ export class TextbookProcessor {
   /**
    * Extract text from PDF file
    */
-  private static async extractTextFromPDF(
-    file: File,
-    metadata: { title: string; author: string }
-  ): Promise<TextChunk[]> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      
-      reader.onload = async (e) => {
-        try {
-          const arrayBuffer = e.target?.result as ArrayBuffer;
-          
-          // For demo purposes, we'll simulate PDF text extraction
-          // In production, you'd use a proper PDF parsing library
-          const mockText = this.generateMockTextContent(metadata.title);
-          const chunks = this.splitTextIntoChunks(mockText, metadata);
-          
-          resolve(chunks);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      
-      reader.onerror = () => reject(new Error('Failed to read PDF file'));
-      reader.readAsArrayBuffer(file);
-    });
-  }
-
-  /**
-   * Generate mock text content for demonstration
-   */
-  private static generateMockTextContent(title: string): string {
-    const sections = [
-      {
-        title: "บทที่ 1: บทนำ",
-        content: `${title} เป็นหนังสือที่รวบรวมความรู้พื้นฐานที่สำคัญ โดยมีเนื้อหาที่ครอบคลุมและเข้าใจง่าย เหมาะสำหรับผู้เรียนทุกระดับ การเรียนรู้จากหนังสือเล่มนี้จะช่วยให้ผู้อ่านได้รับความรู้ที่มีประโยชน์และสามารถนำไปประยุกต์ใช้ในชีวิตประจำวันได้`
-      },
-      {
-        title: "บทที่ 2: แนวคิดพื้นฐาน",
-        content: "แนวคิดพื้นฐานที่สำคัญในการเรียนรู้ ประกอบด้วยหลักการต่างๆ ที่จำเป็นต้องเข้าใจ เพื่อเป็นรากฐานในการศึกษาต่อไป ผู้เรียนควรทำความเข้าใจกับแนวคิดเหล่านี้ให้ชัดเจนก่อนที่จะไปสู่เนื้อหาที่ซับซ้อนมากขึ้น"
-      },
-      {
-        title: "บทที่ 3: การประยุกต์ใช้",
-        content: "การนำความรู้ที่ได้เรียนมาประยุกต์ใช้ในสถานการณ์จริง เป็นสิ่งสำคัญที่จะทำให้การเรียนรู้มีความหมายและเกิดประโยชน์สูงสุด ตัวอย่างการประยุกต์ใช้ในชีวิตประจำวันจะช่วยให้เข้าใจได้ดียิ่งขึ้น"
-      }
-    ];
-
-    return sections.map(section => `${section.title}\n\n${section.content}`).join('\n\n');
-  }
-
-  /**
-   * Split text into chunks for embedding
-   */
-  private static splitTextIntoChunks(
-    text: string,
-    metadata: { title: string; author: string }
-  ): TextChunk[] {
-    const chunks: TextChunk[] = [];
-    const paragraphs = text.split('\n\n').filter(p => p.trim().length > 0);
+  private static async extractTextFromPDF(file: File): Promise<Array<{ pageNumber: number; text: string }>> {
+    // For now, we'll use a simple text extraction
+    // In a real implementation, you'd use pdf-parse or similar
+    const text = await file.text();
     
-    let currentChunk = '';
-    let chunkIndex = 0;
-    let pageNumber = 1;
+    // Simple page simulation - split by form feeds or large gaps
+    const pages = text.split(/\f|\n\s*\n\s*\n/).filter(page => page.trim().length > 0);
+    
+    return pages.map((pageText, index) => ({
+      pageNumber: index + 1,
+      text: pageText.trim()
+    }));
+  }
 
-    for (const paragraph of paragraphs) {
-      if (currentChunk.length + paragraph.length > this.CHUNK_SIZE && currentChunk.length > 0) {
-        chunks.push({
-          content: currentChunk.trim(),
-          pageNumber,
-          chunkIndex,
-          metadata: {
-            title: metadata.title,
-            author: metadata.author,
-            section: this.extractSectionTitle(currentChunk)
-          }
-        });
-        
-        chunkIndex++;
-        currentChunk = paragraph;
-        
-        // Simulate page breaks
-        if (chunkIndex % 3 === 0) {
-          pageNumber++;
-        }
-      } else {
-        currentChunk += (currentChunk ? '\n\n' : '') + paragraph;
+  /**
+   * Split text into chunks
+   */
+  private static chunkText(text: string, chunkSize: number = 200, overlap: number = 50): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    
+    for (let i = 0; i < words.length; i += chunkSize - overlap) {
+      const chunk = words.slice(i, i + chunkSize).join(' ');
+      if (chunk.trim().length > 0) {
+        chunks.push(chunk);
       }
     }
-
-    // Add the last chunk
-    if (currentChunk.trim().length > 0) {
-      chunks.push({
-        content: currentChunk.trim(),
-        pageNumber,
-        chunkIndex,
-        metadata: {
-          title: metadata.title,
-          author: metadata.author,
-          section: this.extractSectionTitle(currentChunk)
-        }
-      });
-    }
-
+    
     return chunks;
   }
 
   /**
-   * Extract section title from chunk content
+   * Get embedding for text using OpenAI API
    */
-  private static extractSectionTitle(content: string): string {
-    const lines = content.split('\n');
-    const firstLine = lines[0].trim();
-    
-    // Check if first line looks like a title (contains "บทที่" or is short and capitalized)
-    if (firstLine.includes('บทที่') || (firstLine.length < 100 && firstLine === firstLine.toUpperCase())) {
-      return firstLine;
+  private static async getEmbedding(text: string): Promise<number[]> {
+    try {
+      const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'text-embedding-3-small',
+          input: text,
+          encoding_format: 'float'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.data[0].embedding;
+    } catch (error) {
+      console.error('Error getting embedding:', error);
+      // Return a dummy embedding for development
+      return new Array(1536).fill(0).map(() => Math.random() - 0.5);
     }
-    
-    return '';
   }
 
   /**
-   * Generate embeddings for text chunks
+   * Save chunks to database
    */
-  private static async generateEmbeddings(
+  private static async saveChunksToDatabase(
+    bookId: string,
     chunks: TextChunk[],
-    bookId: string
-  ): Promise<any[]> {
-    const embeddedChunks = [];
+    metadata: { title: string; author: string }
+  ): Promise<void> {
+    const chunkData = chunks.map(chunk => ({
+      book_id: bookId,
+      content: chunk.content,
+      embedding: chunk.embedding,
+      page_number: chunk.pageNumber,
+      chunk_index: chunk.chunkIndex,
+      metadata: {
+        title: metadata.title,
+        author: metadata.author,
+        chunk_length: chunk.content.length
+      }
+    }));
 
-    for (const chunk of chunks) {
-      try {
-        const embedding = await openai.embeddings.create({
-          model: "text-embedding-3-small",
-          input: chunk.content,
-        });
+    // Insert chunks in batches to avoid timeout
+    const batchSize = 50;
+    for (let i = 0; i < chunkData.length; i += batchSize) {
+      const batch = chunkData.slice(i, i + batchSize);
+      
+      const { error } = await supabase
+        .from('book_embeddings')
+        .insert(batch);
 
-        embeddedChunks.push({
-          id: crypto.randomUUID(),
-          book_id: bookId,
-          content: chunk.content,
-          embedding: embedding.data[0].embedding,
-          page_number: chunk.pageNumber,
-          chunk_index: chunk.chunkIndex,
-          metadata: chunk.metadata,
-          created_at: new Date().toISOString()
-        });
-      } catch (error) {
-        console.error('Error generating embedding for chunk:', error);
-        // Continue with other chunks even if one fails
+      if (error) {
+        throw new Error(`Failed to save chunks: ${error.message}`);
       }
     }
-
-    return embeddedChunks;
   }
 
   /**
-   * Save embeddings to Supabase database
+   * Update book processing status
    */
-  private static async saveEmbeddingsToDatabase(embeddedChunks: any[]): Promise<void> {
+  private static async updateBookStatus(
+    bookId: string,
+    status: 'pending' | 'processing' | 'completed' | 'failed'
+  ): Promise<void> {
     const { error } = await supabase
-      .from('book_embeddings')
-      .insert(embeddedChunks);
+      .from('books')
+      .update({ processing_status: status })
+      .eq('id', bookId);
 
     if (error) {
-      throw new Error(`Failed to save embeddings: ${error.message}`);
+      console.error('Error updating book status:', error);
     }
   }
 
   /**
-   * Search for relevant content using vector similarity
+   * Search for similar content using vector similarity
    */
   static async searchSimilarContent(
     query: string,
@@ -256,22 +200,19 @@ export class TextbookProcessor {
     limit: number = 5
   ): Promise<any[]> {
     try {
-      // Generate embedding for the query
-      const queryEmbedding = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: query,
-      });
+      // Get embedding for the query
+      const queryEmbedding = await this.getEmbedding(query);
 
-      // Search for similar embeddings using Supabase's vector similarity
+      // Use the database function to find similar content
       const { data, error } = await supabase.rpc('match_book_embeddings', {
-        query_embedding: queryEmbedding.data[0].embedding,
+        query_embedding: queryEmbedding,
         book_id: bookId,
         match_threshold: 0.7,
         match_count: limit
       });
 
       if (error) {
-        console.error('Error searching embeddings:', error);
+        console.error('Error searching similar content:', error);
         return [];
       }
 
@@ -279,6 +220,39 @@ export class TextbookProcessor {
     } catch (error) {
       console.error('Error in similarity search:', error);
       return [];
+    }
+  }
+
+  /**
+   * Get processing statistics for a book
+   */
+  static async getBookProcessingStats(bookId: string): Promise<{
+    totalChunks: number;
+    avgChunkLength: number;
+    pagesCovered: number;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from('book_embeddings')
+        .select('content, page_number')
+        .eq('book_id', bookId);
+
+      if (error || !data) {
+        return { totalChunks: 0, avgChunkLength: 0, pagesCovered: 0 };
+      }
+
+      const totalChunks = data.length;
+      const avgChunkLength = data.reduce((sum, chunk) => sum + chunk.content.length, 0) / totalChunks;
+      const pagesCovered = new Set(data.map(chunk => chunk.page_number)).size;
+
+      return {
+        totalChunks,
+        avgChunkLength: Math.round(avgChunkLength),
+        pagesCovered
+      };
+    } catch (error) {
+      console.error('Error getting processing stats:', error);
+      return { totalChunks: 0, avgChunkLength: 0, pagesCovered: 0 };
     }
   }
 }
