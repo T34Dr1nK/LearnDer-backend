@@ -10,6 +10,8 @@ import RegisterForm from './components/RegisterForm';
 import Profile from './components/Profile';
 import { Home, BookOpen, MessageSquare, BarChart3, Users, Settings } from 'lucide-react';
 import { User } from './types/auth';
+import { supabase } from './lib/supabase';
+import bcrypt from 'bcryptjs';
 
 function App() {
   // state เก็บข้อมูลผู้ใช้งาน (null = ยังไม่ล็อกอิน)
@@ -36,30 +38,50 @@ function App() {
 
   // ฟังก์ชันจำลองการล็อกอิน (ต้องแก้ให้เชื่อม API จริง)
   // รับ email, password และ role (teacher หรือ student)
-  const handleLogin = async (email: string, password: string, role: 'teacher' | 'student') => {
-    setIsLoading(true); // ตั้งสถานะกำลังโหลดเป็น true
+const handleLogin = async (email: string, password: string, role: 'teacher' | 'student') => {
+  setIsLoading(true);
 
-    try {
-      // mock API call โดยใช้ setTimeout จำลองการตอบกลับ 1.5 วินาที
-      setTimeout(() => {
-        // สร้าง mock user object
-        const mockUser: User = {
-          id: '1',
-          email,
-          name: role === 'teacher' ? 'อาจารย์สมชาย' : 'นักเรียนสมหญิง',
-          role
-        };
+  try {
+    // Query user data from Supabase
+    const { data: userInDb, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-        setUser(mockUser); // เก็บ user ลง state
-        // เปลี่ยนหน้าปัจจุบันให้เป็น 'teacher-dashboard' ถ้าเป็นครู, หรือ 'chat' ถ้าเป็นนักเรียน
-        setCurrentView(role === 'teacher' ? 'teacher-dashboard' : 'chat');
-        setIsLoading(false); // โหลดเสร็จแล้ว
-      }, 1500);
-    } catch (error) {
-      console.error('Login error:', error);
+    if (error || !userInDb) {
+      alert('เข้าสู่ระบบไม่สำเร็จ: ไม่พบผู้ใช้นี้');
       setIsLoading(false);
+      return;
     }
-  };
+
+    // Compare hashed password
+    const isMatch = await bcrypt.compare(password, userInDb.password_hash);
+
+    if (!isMatch) {
+      alert('เข้าสู่ระบบไม่สำเร็จ: รหัสผ่านไม่ถูกต้อง');
+      setIsLoading(false);
+      return;
+    }
+
+    // Create user object to store in state
+    const loadedUser: User = {
+      id: userInDb.id,
+      email: userInDb.email,
+      name: userInDb.name || (role === 'teacher' ? 'อาจารย์' : 'นักเรียน'),
+      role: userInDb.role,
+    };
+
+    setUser(loadedUser);
+    setCurrentView(loadedUser.role === 'teacher' ? 'teacher-dashboard' : 'chat');
+    setIsLoading(false);
+
+  } catch (err) {
+    alert('เกิดข้อผิดพลาดระหว่างเข้าสู่ระบบ');
+    console.error('Login error:', err);
+    setIsLoading(false);
+  }
+};
 
   // ฟังก์ชันจำลองการลงทะเบียน (ต้องแก้ให้เชื่อม API จริง)
   // รับ email, password, name และ role
