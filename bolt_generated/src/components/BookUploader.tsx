@@ -65,6 +65,16 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
     }
 
     try {
+      //✅ Step 1: Get current user ID from Supabase
+      const {
+        data: { user },
+        error: userError
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error('ไม่สามารถดึงข้อมูลผู้ใช้ได้ กรุณาเข้าสู่ระบบใหม่');
+      }
+
       setUploadProgress({
         stage: 'uploading',
         message: 'กำลังสร้างข้อมูลหนังสือ...',
@@ -80,7 +90,7 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
           description: bookDescription,
           category: bookCategory,
           processing_status: 'pending',
-          created_by: 'current-user-id' // Replace with actual user ID
+          created_by: user.id
         })
         .select('id')
         .single();
