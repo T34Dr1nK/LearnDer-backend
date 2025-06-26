@@ -68,7 +68,7 @@ const handleLogin = async (email: string, password: string, role: 'teacher' | 's
     const loadedUser: User = {
       id: userInDb.id,
       email: userInDb.email,
-      name: userInDb.name || (role === 'teacher' ? 'อาจารย์' : 'นักเรียน'),
+      name: userInDb.username || (role === 'teacher' ? 'อาจารย์' : 'นักเรียน'),
       role: userInDb.role,
     };
 
@@ -254,7 +254,7 @@ const handleLogin = async (email: string, password: string, role: 'teacher' | 's
       case 'teacher-analytics':
         return (
           <div className="min-h-screen bg-gradient-to-br from-purple-50 via-indigo-50 to-pink-50">
-            <TeacherDashboard />
+            <TeacherDashboard user={user}/>
           </div>
         );
       default:

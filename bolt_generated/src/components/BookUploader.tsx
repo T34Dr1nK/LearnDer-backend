@@ -4,6 +4,7 @@ import { TextbookProcessor } from '../services/textbookProcessor';
 import { supabase } from '../lib/supabase';
 
 interface BookUploaderProps {
+  userId: string;
   onUploadComplete: (bookId: string) => void;
   onClose: () => void;
 }
@@ -14,7 +15,7 @@ interface UploadProgress {
   progress: number;
 }
 
-const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }) => {
+const BookUploader: React.FC<BookUploaderProps> = ({ userId, onUploadComplete, onClose }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [bookTitle, setBookTitle] = useState('');
   const [bookAuthor, setBookAuthor] = useState('');
@@ -65,16 +66,6 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
     }
 
     try {
-      //✅ Step 1: Get current user ID from Supabase
-      const {
-        data: { user },
-        error: userError
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        throw new Error('ไม่สามารถดึงข้อมูลผู้ใช้ได้ กรุณาเข้าสู่ระบบใหม่');
-      }
-
       setUploadProgress({
         stage: 'uploading',
         message: 'กำลังสร้างข้อมูลหนังสือ...',
@@ -90,7 +81,7 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
           description: bookDescription,
           category: bookCategory,
           processing_status: 'pending',
-          created_by: user.id
+          created_by: userId
         })
         .select('id')
         .single();

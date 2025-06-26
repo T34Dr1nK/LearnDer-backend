@@ -1,4 +1,8 @@
 import { supabase } from '../lib/supabase';
+import { pipeline } from '@xenova/transformers';
+
+// Cache the pipeline to avoid reloading the model
+let embedder: any = null;
 
 export interface ProcessingResult {
   success: boolean;
@@ -112,29 +116,21 @@ export class TextbookProcessor {
    */
   private static async getEmbedding(text: string): Promise<number[]> {
     try {
-      const response = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: text,
-          encoding_format: 'float'
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.statusText}`);
+      if (!embedder) {
+        embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
       }
 
-      const data = await response.json();
-      return data.data[0].embedding;
+      const output = await embedder(text, {
+        pooling: 'mean', // mean pooling to get a fixed-size embedding
+        normalize: true
+      });
+
+      // Flatten the output tensor
+      return Array.from(output.data);
     } catch (error) {
-      console.error('Error getting embedding:', error);
-      // Return a dummy embedding for development
-      return new Array(1536).fill(0).map(() => Math.random() - 0.5);
+      console.error('Error generating embedding with Hugging Face model:', error);
+      // Return dummy embedding for fallback
+      return new Array(384).fill(0).map(() => Math.random() - 0.5);
     }
   }
 
@@ -146,18 +142,23 @@ export class TextbookProcessor {
     chunks: TextChunk[],
     metadata: { title: string; author: string }
   ): Promise<void> {
+    const cleanThaiString = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').normalize('NFC');
+
+
     const chunkData = chunks.map(chunk => ({
       book_id: bookId,
-      content: chunk.content,
+      content: cleanThaiString(chunk.content),
       embedding: chunk.embedding,
       page_number: chunk.pageNumber,
       chunk_index: chunk.chunkIndex,
       metadata: {
-        title: metadata.title,
-        author: metadata.author,
+        title: cleanThaiString(metadata.title),
+        author: cleanThaiString(metadata.author),
         chunk_length: chunk.content.length
       }
     }));
+
+
 
     // Insert chunks in batches to avoid timeout
     const batchSize = 50;

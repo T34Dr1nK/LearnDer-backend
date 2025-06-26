@@ -27,7 +27,7 @@ interface Book {
   processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
 }
 
-const TeacherDashboard = () => {
+const TeacherDashboard = ({ user }: { user: { id: string; username: string } }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'books' | 'analytics'>('overview');
   const [showAddBookModal, setShowAddBookModal] = useState(false);
   const [books, setBooks] = useState<Book[]>([
@@ -382,6 +382,7 @@ const TeacherDashboard = () => {
         <BookUploader
           onUploadComplete={handleUploadComplete}
           onClose={() => setShowAddBookModal(false)}
+          userId={user.id}
         />
       )}
     </div>
