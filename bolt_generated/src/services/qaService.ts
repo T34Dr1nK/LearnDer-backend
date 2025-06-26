@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { TextbookProcessor } from './textbookProcessor';
-import { AIService } from './openai';
+// เปลี่ยนจาก openai มาเป็น groqai
+import { AIService } from './groqai';
 
 export interface QARequest {
   question: string;
@@ -18,46 +19,39 @@ export interface QAResponse {
     confidence: number;
   }>;
   sessionId: string;
+  followUps?: string[]; // เพิ่มตรงนี้
 }
 
+
 export class QAService {
-  /**
-   * Process a question and generate an answer using RAG (Retrieval-Augmented Generation)
-   */
   static async processQuestion(request: QARequest): Promise<QAResponse> {
     try {
-      // 1. Search for relevant content from the book
       const relevantChunks = await TextbookProcessor.searchSimilarContent(
         request.question,
         request.bookId,
         5
       );
 
-      // 2. Create or get chat session
       const sessionId = request.sessionId || await this.createChatSession(
         request.userId,
         request.bookId,
         request.question
       );
 
-      // 3. Build context from relevant chunks
       const context = this.buildContext(relevantChunks);
 
-      // 4. Generate AI response using the context
       const answer = await this.generateContextualAnswer(
         request.question,
         context,
         relevantChunks
       );
 
-      // 5. Save the conversation
       await this.saveChatMessage(sessionId, request.question, 'user');
       await this.saveChatMessage(sessionId, answer, 'assistant', {
         sources: relevantChunks.map(chunk => chunk.content),
         confidence: this.calculateConfidence(relevantChunks)
       });
 
-      // 6. Format sources for response
       const sources = relevantChunks.map(chunk => ({
         content: chunk.content.substring(0, 200) + '...',
         pageNumber: chunk.page_number,
@@ -65,26 +59,58 @@ export class QAService {
         confidence: chunk.similarity || 0.8
       }));
 
+      const followUps = await this.suggestFollowUpQuestions(request.question, answer);
+
       return {
         answer,
         sources,
-        sessionId
+        sessionId,
+        followUps
       };
+
     } catch (error) {
       console.error('Error processing question:', error);
       throw new Error('ไม่สามารถประมวลผลคำถามได้ในขณะนี้');
     }
   }
 
-  /**
-   * Create a new chat session
-   */
+  static async suggestFollowUpQuestions(question: string, answer: string): Promise<string[]> {
+    const systemPrompt = `
+คุณคือ AI ผู้ช่วยนักเรียน
+หลังจากนักเรียนถามว่า "${question}"
+และคุณตอบว่า "${answer}"
+
+กรุณาแนะนำคำถามต่อยอด 3-4 ข้อในรูปแบบ array JSON เช่น:
+["...", "...", "..."]
+`;
+
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: 'โปรดสร้างคำถามต่อยอดจากคำถามข้างต้น' }
+    ];
+
+    const result = await AIService.generateResponse(messages, {
+      temperature: 0.4,
+      maxTokens: 200
+    });
+
+    try {
+      const parsed = JSON.parse(result);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+      console.warn('AI quick action parsing failed:', e);
+    }
+
+    return []; // fallback
+  }
+
+
   private static async createChatSession(
     userId: string,
     bookId: string,
     firstQuestion: string
   ): Promise<string> {
-    const sessionTitle = firstQuestion.length > 50 
+    const sessionTitle = firstQuestion.length > 50
       ? firstQuestion.substring(0, 50) + '...'
       : firstQuestion;
 
@@ -105,40 +131,37 @@ export class QAService {
     return data.id;
   }
 
-  /**
-   * Build context string from relevant chunks
-   */
   private static buildContext(chunks: any[]): string {
     if (chunks.length === 0) {
       return 'ไม่พบเนื้อหาที่เกี่ยวข้องในหนังสือ';
     }
 
-    const contextParts = chunks.map((chunk, index) => 
+    const contextParts = chunks.map((chunk, index) =>
       `[ส่วนที่ ${index + 1}] ${chunk.content}`
     );
 
     return contextParts.join('\n\n');
   }
 
-  /**
-   * Generate contextual answer using AI
-   */
   private static async generateContextualAnswer(
     question: string,
     context: string,
     relevantChunks: any[]
   ): Promise<string> {
-    const systemPrompt = `คุณเป็น AI ผู้ช่วยการเรียนรู้ที่เชี่ยวชาญในการตอบคำถามจากเนื้อหาหนังสือ
+    const systemPrompt = `
+คุณคือผู้ช่วย AI ด้านการศึกษา ที่มีหน้าที่ตอบคำถามนักเรียนเป็นภาษาไทยเท่านั้น
 
-คำแนะนำ:
-1. ตอบคำถามโดยอิงจากเนื้อหาที่ให้มาเท่านั้น
-2. ใช้ภาษาไทยที่เข้าใจง่าย เหมาะสำหรับนักเรียน
-3. ให้คำตอบที่ชัดเจน มีโครงสร้าง และมีตัวอย่างประกอบ
-4. หากไม่พบข้อมูลที่เกี่ยวข้อง ให้บอกว่าไม่มีข้อมูลในหนังสือ
-5. อ้างอิงหน้าหรือส่วนของหนังสือเมื่อเป็นไปได้
+กฎ:
+1. ห้ามใช้ภาษาอังกฤษ หรือภาษาต่างประเทศอื่น
+2. หากไม่มีข้อมูลที่เกี่ยวข้องในหนังสือ ให้ตอบว่า: "ไม่พบข้อมูลที่เกี่ยวข้องในหนังสือ"
+3. ใช้ภาษาไทยที่ชัดเจน เข้าใจง่าย และมีโครงสร้างดี
+4. อ้างอิงหน้าหรือหัวข้อจากหนังสือหากมี
+5. ห้ามแต่งเรื่องขึ้นเองนอกเหนือจากข้อมูลในหนังสือ
 
 เนื้อหาจากหนังสือ:
-${context}`;
+${context}
+
+`;
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -146,14 +169,11 @@ ${context}`;
     ];
 
     return await AIService.generateResponse(messages, {
-      temperature: 0.3, // Lower temperature for more focused answers
+      temperature: 0.3,
       maxTokens: 800
     });
   }
 
-  /**
-   * Save chat message to database
-   */
   private static async saveChatMessage(
     sessionId: string,
     content: string,
@@ -174,22 +194,16 @@ ${context}`;
     }
   }
 
-  /**
-   * Calculate confidence score based on similarity scores
-   */
   private static calculateConfidence(chunks: any[]): number {
     if (chunks.length === 0) return 0;
-    
-    const avgSimilarity = chunks.reduce((sum, chunk) => 
+
+    const avgSimilarity = chunks.reduce((sum, chunk) =>
       sum + (chunk.similarity || 0.8), 0
     ) / chunks.length;
-    
+
     return Math.round(avgSimilarity * 100) / 100;
   }
 
-  /**
-   * Get chat history for a session
-   */
   static async getChatHistory(sessionId: string): Promise<any[]> {
     const { data, error } = await supabase
       .from('chat_messages')
@@ -205,9 +219,6 @@ ${context}`;
     return data || [];
   }
 
-  /**
-   * Get user's chat sessions for a book
-   */
   static async getUserChatSessions(userId: string, bookId: string): Promise<any[]> {
     const { data, error } = await supabase
       .from('chat_sessions')
