@@ -3,6 +3,11 @@ import { Send, Bot, User, Book, Sparkles, BookOpen, Play, Loader, AlertCircle, Z
 import { AIService, ChatMessage } from '../services/groqai';
 import { supabase } from '../lib/supabase';
 
+// Simple logger: prefix with [ChatBot] and ISO timestamp
+const log = (...args: any[]) => {
+  console.log(`[ChatBot ${new Date().toISOString()}]`, ...args);
+};
+
 interface Message {
   id: string;
   text: string;
@@ -21,28 +26,15 @@ interface ChatBotProps {
   selectedBook?: {
     id: string;
     title: string;
-    author: string;
+    author?: string;
   };
-  currentPage?: number;
-  currentContent?: {
-    title: string;
-    content: string;
-  };
-  onBookSelect?: (bookId: string) => void;
-  onReadBook?: () => void;
 }
 
-const ChatBot: React.FC<ChatBotProps> = ({
-  selectedBook,
-  currentPage,
-  currentContent,
-  onBookSelect,
-  onReadBook
-}) => {
+const ChatBot: React.FC<ChatBotProps> = ({ selectedBook }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+<<<<<<< HEAD
   const [availableBooks, setAvailableBooks] = useState<Array<{ id: string, title: string, author: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking');
@@ -120,6 +112,15 @@ const ChatBot: React.FC<ChatBotProps> = ({
     }
   };
 
+=======
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+>>>>>>> ac70455 (Fix and add log to ChatBot file)
   const handleSendMessage = async () => {
     if (!inputText.trim() || isTyping) return;
 
@@ -127,11 +128,16 @@ const ChatBot: React.FC<ChatBotProps> = ({
       id: Date.now().toString(),
       text: inputText,
       isBot: false,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
+<<<<<<< HEAD
     setMessages(prev => [...prev, userMessage]);
     const currentQuestion = inputText;
+=======
+    log('➡️ User:', userMessage.text);
+    setMessages((prev) => [...prev, userMessage]);
+>>>>>>> ac70455 (Fix and add log to ChatBot file)
     setInputText('');
     setIsTyping(true);
 
@@ -149,6 +155,7 @@ const ChatBot: React.FC<ChatBotProps> = ({
       let systemPrompt = 'คุณเป็น AI ผู้ช่วยตอบคำถามด้านการเรียนรู้อย่างเป็นมิตรและกระชับ';
 
       if (selectedBook) {
+<<<<<<< HEAD
         systemPrompt += ` เนื้อหาเกี่ยวกับหนังสือชื่อ "${selectedBook.title}" โดย ${selectedBook.author}`;
         if (currentPage) {
           systemPrompt += ` หน้าที่ ${currentPage}`;
@@ -171,6 +178,47 @@ const ChatBot: React.FC<ChatBotProps> = ({
       setMessages(prev => prev.filter(msg => !msg.isTyping));
 
       const botResponse: Message = {
+=======
+        // Use the new QA service for book-specific questions
+        const response = await QAService.processQuestion({
+          question: inputText,
+          bookId: selectedBook.id,
+          sessionId: sessionId || undefined,
+          userId: 'current-user-id', // Replace with actual user ID
+        });
+
+        if (!sessionId) {
+          setSessionId(response.sessionId);
+        }
+
+        const botResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response.answer,
+          isBot: true,
+          timestamp: new Date(),
+          sources: response.sources,
+        };
+        log('⬅️ Bot (QA):', botResponse.text, response.sources);
+        setMessages((prev) => [...prev, botResponse]);
+      } else {
+        // Fallback to mock response for general questions
+        setTimeout(() => {
+          const botResponse: Message = {
+            id: (Date.now() + 1).toString(),
+            text: generateMockResponse(inputText),
+            isBot: true,
+            timestamp: new Date(),
+          };
+          log('⬅️ Bot (Mock):', botResponse.text);
+          setMessages((prev) => [...prev, botResponse]);
+          setIsTyping(false);
+        }, 1500);
+        return;
+      }
+    } catch (error) {
+      log('❌ Error sending message:', error);
+      const errorMessage: Message = {
+>>>>>>> ac70455 (Fix and add log to ChatBot file)
         id: (Date.now() + 1).toString(),
         text: aiResponse,
         isBot: true,
@@ -222,15 +270,20 @@ const ChatBot: React.FC<ChatBotProps> = ({
         id: (Date.now() + 1).toString(),
         text: errorMessage + '\n\nกรุณาลองใหม่อีกครั้ง หรือติดต่อผู้ดูแลระบบ',
         isBot: true,
-        timestamp: new Date()
+        timestamp: new Date(),
       };
+<<<<<<< HEAD
 
       setMessages(prev => [...prev, errorResponse]);
+=======
+      setMessages((prev) => [...prev, errorMessage]);
+>>>>>>> ac70455 (Fix and add log to ChatBot file)
     } finally {
       setIsTyping(false);
     }
   };
 
+<<<<<<< HEAD
   // เปลี่ยนเป็น function declaration เพื่อไม่ให้ error ใช้ก่อนประกาศ
   function handleKeyPress(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -574,7 +627,75 @@ const ChatBot: React.FC<ChatBotProps> = ({
         <div className="mt-2">
           {getAPIStatusIndicator()}
         </div>
+=======
+  const generateMockResponse = (input: string) => {
+    const responses = [
+      `เกี่ยวกับคำถาม "${input}" ที่น่าสนใจนะครับ แต่ผมยังเป็นแค่โมเดลตัวอย่าง ถ้ามีหนังสือหรือข้อมูลเพิ่มเติม ผมจะช่วยได้มากขึ้นครับ`,
+      'ลองพิมพ์คำถามที่เกี่ยวกับเนื้อหาในหนังสือดูสิครับ ผมอาจช่วยได้มากขึ้น!',
+      'ขอโทษครับ ผมยังไม่เข้าใจคำถามนี้ ลองถามอีกครั้งไหมครับ?',
+    ];
+    return responses[Math.floor(Math.random() * responses.length)];
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white shadow-lg rounded-lg">
+      <div className="flex-1 overflow-y-auto p-4">
+        {messages.map((msg) => (
+          <div key={msg.id} className={`flex mb-2 ${msg.isBot ? 'justify-start' : 'justify-end'}`}>
+            <div
+              className={`max-w-xs md:max-w-md px-4 py-2 rounded-lg ${
+                msg.isBot ? 'bg-gray-100 text-gray-800' : 'bg-blue-500 text-white'
+              }`}
+            >
+              {msg.text}
+              {msg.sources && (
+                <ul className="mt-2 text-xs text-gray-500">
+                  {msg.sources.map((s, idx) => (
+                    <li key={idx}>
+                      [Page {s.pageNumber}]{s.section ? ` ${s.section}` : ''}: {s.content}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
       </div>
+
+      {isTyping && (
+        <div className="flex items-center p-4">
+          <Loader className="animate-spin mr-2" />
+          <span className="text-gray-500">ChatBot กำลังพิมพ์...</span>
+        </div>
+      )}
+
+      <div className="p-4 border-t flex items-center space-x-2">
+        <input
+          type="text"
+          className="flex-1 p-2 border rounded focus:outline-none focus:ring"
+          placeholder="พิมพ์ข้อความ..."
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+        />
+        <button
+          className="p-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none"
+          onClick={handleSendMessage}
+          disabled={isTyping}
+        >
+          <Send />
+        </button>
+>>>>>>> ac70455 (Fix and add log to ChatBot file)
+      </div>
+
+      {/* Connection status */}
+      {selectedBook && (
+        <div className="mt-2 flex items-center space-x-2 text-xs text-gray-500">
+          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+          <span>เชื่อมต่อกับฐานข้อมูล Vector สำเร็จ</span>
+        </div>
+      )}
     </div>
   );
 };
