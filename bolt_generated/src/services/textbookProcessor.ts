@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { AIService } from './groqai';
 
 export interface ProcessingResult {
   success: boolean;
@@ -6,213 +7,111 @@ export interface ProcessingResult {
   error?: string;
 }
 
-export interface TextChunk {
+export interface SearchResult {
   content: string;
-  pageNumber: number;
-  chunkIndex: number;
-  embedding: number[];
+  page_number: number;
+  chunk_index: number;
+  metadata: any;
+  similarity: number;
 }
 
 export class TextbookProcessor {
-  /**
-   * Process a PDF file and store embeddings in the database
-   */
+  private static readonly CHUNK_SIZE = 500; // words per chunk
+  private static readonly CHUNK_OVERLAP = 50; // words overlap between chunks
+
   static async processPDFFile(
     file: File,
     bookId: string,
     metadata: { title: string; author: string }
   ): Promise<ProcessingResult> {
     try {
-      // Update book status to processing
-      await this.updateBookStatus(bookId, 'processing');
+      await supabase
+        .from('books')
+        .update({ processing_status: 'processing' })
+        .eq('id', bookId);
 
-      // Extract text from PDF
-      const pages = await this.extractTextFromPDF(file);
+      const text = await this.extractTextFromPDF(file);
+      const chunks = this.chunkText(text);
       
-      // Process each page and create chunks
-      const allChunks: TextChunk[] = [];
-      
-      for (const page of pages) {
-        const chunks = this.chunkText(page.text);
-        
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          if (chunk.trim().length > 50) { // Only process meaningful chunks
-            const embedding = await this.getEmbedding(chunk);
-            
-            allChunks.push({
-              content: chunk,
-              pageNumber: page.pageNumber,
-              chunkIndex: i,
-              embedding
-            });
-          }
-        }
+      let processedCount = 0;
+      const batchSize = 10;
+
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, i + batchSize);
+
+        await Promise.all(
+          batch.map(async (chunk, index) => {
+            try {
+              // เรียกใช้ generateEmbedding จาก groqai
+              const embedding = await AIService.generateEmbedding(chunk.content);
+
+              await supabase
+                .from('book_embeddings')
+                .insert({
+                  book_id: bookId,
+                  content: chunk.content,
+                  embedding: embedding,
+                  page_number: chunk.pageNumber,
+                  chunk_index: chunk.chunkIndex,
+                  metadata: {
+                    ...metadata,
+                    word_count: chunk.content.split(' ').length
+                  }
+                });
+
+              processedCount++;
+            } catch (error) {
+              console.error(`Error processing chunk ${i + index}:`, error);
+            }
+          })
+        );
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Save chunks to database
-      await this.saveChunksToDatabase(bookId, allChunks, metadata);
-
       // Update book status to completed
-      await this.updateBookStatus(bookId, 'completed');
+      await supabase
+        .from('books')
+        .update({ processing_status: 'completed' })
+        .eq('id', bookId);
 
       return {
         success: true,
-        chunksProcessed: allChunks.length
+        chunksProcessed: processedCount
       };
     } catch (error) {
       console.error('Error processing PDF:', error);
-      
-      // Update book status to failed
-      await this.updateBookStatus(bookId, 'failed');
-      
+      await supabase
+        .from('books')
+        .update({ processing_status: 'failed' })
+        .eq('id', bookId);
+
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
+        error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   }
 
-  /**
-   * Extract text from PDF file
-   */
-  private static async extractTextFromPDF(file: File): Promise<Array<{ pageNumber: number; text: string }>> {
-    // For now, we'll use a simple text extraction
-    // In a real implementation, you'd use pdf-parse or similar
-    const text = await file.text();
-    
-    // Simple page simulation - split by form feeds or large gaps
-    const pages = text.split(/\f|\n\s*\n\s*\n/).filter(page => page.trim().length > 0);
-    
-    return pages.map((pageText, index) => ({
-      pageNumber: index + 1,
-      text: pageText.trim()
-    }));
-  }
-
-  /**
-   * Split text into chunks
-   */
-  private static chunkText(text: string, chunkSize: number = 200, overlap: number = 50): string[] {
-    const words = text.split(/\s+/);
-    const chunks: string[] = [];
-    
-    for (let i = 0; i < words.length; i += chunkSize - overlap) {
-      const chunk = words.slice(i, i + chunkSize).join(' ');
-      if (chunk.trim().length > 0) {
-        chunks.push(chunk);
-      }
-    }
-    
-    return chunks;
-  }
-
-  /**
-   * Get embedding for text using OpenAI API
-   */
-  private static async getEmbedding(text: string): Promise<number[]> {
-    try {
-      const response = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: text,
-          encoding_format: 'float'
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      return data.data[0].embedding;
-    } catch (error) {
-      console.error('Error getting embedding:', error);
-      // Return a dummy embedding for development
-      return new Array(1536).fill(0).map(() => Math.random() - 0.5);
-    }
-  }
-
-  /**
-   * Save chunks to database
-   */
-  private static async saveChunksToDatabase(
-    bookId: string,
-    chunks: TextChunk[],
-    metadata: { title: string; author: string }
-  ): Promise<void> {
-    const chunkData = chunks.map(chunk => ({
-      book_id: bookId,
-      content: chunk.content,
-      embedding: chunk.embedding,
-      page_number: chunk.pageNumber,
-      chunk_index: chunk.chunkIndex,
-      metadata: {
-        title: metadata.title,
-        author: metadata.author,
-        chunk_length: chunk.content.length
-      }
-    }));
-
-    // Insert chunks in batches to avoid timeout
-    const batchSize = 50;
-    for (let i = 0; i < chunkData.length; i += batchSize) {
-      const batch = chunkData.slice(i, i + batchSize);
-      
-      const { error } = await supabase
-        .from('book_embeddings')
-        .insert(batch);
-
-      if (error) {
-        throw new Error(`Failed to save chunks: ${error.message}`);
-      }
-    }
-  }
-
-  /**
-   * Update book processing status
-   */
-  private static async updateBookStatus(
-    bookId: string,
-    status: 'pending' | 'processing' | 'completed' | 'failed'
-  ): Promise<void> {
-    const { error } = await supabase
-      .from('books')
-      .update({ processing_status: status })
-      .eq('id', bookId);
-
-    if (error) {
-      console.error('Error updating book status:', error);
-    }
-  }
-
-  /**
-   * Search for similar content using vector similarity
-   */
   static async searchSimilarContent(
     query: string,
     bookId: string,
-    limit: number = 5
-  ): Promise<any[]> {
+    limit: number = 5,
+    threshold: number = 0.7
+  ): Promise<SearchResult[]> {
     try {
-      // Get embedding for the query
-      const queryEmbedding = await this.getEmbedding(query);
+      // เรียกใช้ generateEmbedding จาก groqai
+      const queryEmbedding = await AIService.generateEmbedding(query);
 
-      // Use the database function to find similar content
       const { data, error } = await supabase.rpc('match_book_embeddings', {
         query_embedding: queryEmbedding,
         book_id: bookId,
-        match_threshold: 0.7,
+        match_threshold: threshold,
         match_count: limit
       });
 
       if (error) {
-        console.error('Error searching similar content:', error);
+        console.error('Error searching embeddings:', error);
         return [];
       }
 
@@ -224,35 +123,135 @@ export class TextbookProcessor {
   }
 
   /**
-   * Get processing statistics for a book
+   * Extract text from PDF file (simplified version)
    */
-  static async getBookProcessingStats(bookId: string): Promise<{
-    totalChunks: number;
-    avgChunkLength: number;
-    pagesCovered: number;
+  private static async extractTextFromPDF(file: File): Promise<string> {
+    // This is a simplified version. In production, you would use:
+    // - pdf-parse library on the backend
+    // - Or a PDF processing service
+    
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      
+      reader.onload = () => {
+        // This is a mock implementation
+        // In reality, you'd need proper PDF parsing
+        const mockText = `
+        บทที่ 1: การเคลื่อนที่ของวัตถุ
+        
+        การเคลื่อนที่เป็นปรากฏการณ์ที่เราพบเห็นในชีวิตประจำวันอยู่เสมอ ไม่ว่าจะเป็นการเดินของคน การวิ่งของสัตว์ หรือการเคลื่อนที่ของยานพาหนะต่างๆ
+
+        ในบทนี้เราจะมาเรียนรู้เกี่ยวกับ:
+        • ความหมายของการเคลื่อนที่
+        • ประเภทของการเคลื่อนที่
+        • ความเร็วและความเร่ง
+        • กฎการเคลื่อนที่ของนิวตัน
+
+        การเคลื่อนที่ (Motion) หมายถึง การเปลี่ยนแปลงตำแหน่งของวัตถุเมื่อเทียบกับจุดอ้างอิงหนึ่งๆ ตามเวลาที่ผ่านไป
+
+        ตัวอย่างการเคลื่อนที่ในชีวิตประจำวัน:
+        1. รถยนต์วิ่งบนถนน - เป็นการเคลื่อนที่แบบเส้นตรง
+        2. เข็มนาฬิกา - เป็นการเคลื่อนที่แบบหมุน
+        3. ลูกบอลที่ถูกโยนขึ้นไปในอากาศ - เป็นการเคลื่อนที่แบบโค้ง
+
+        บทที่ 2: ความเร็วและความเร่ง
+        
+        ความเร็ว (Speed) คือ อัตราการเปลี่ยนแปลงของระยะทางต่อหน่วยเวลา
+
+        สูตรการคำนวณความเร็ว:
+        ความเร็ว = ระยะทาง ÷ เวลา
+        v = s ÷ t
+
+        หน่วยของความเร็ว:
+        • เมตรต่อวินาที (m/s)
+        • กิโลเมตรต่อชั่วโมง (km/h)
+        • ไมล์ต่อชั่วโมง (mph)
+
+        ความเร่ง (Acceleration) คือ อัตราการเปลี่ยนแปลงของความเร็วต่อหน่วยเวลา
+
+        สูตรการคำนวณความเร่ง:
+        ความเร่ง = การเปลี่ยนแปลงความเร็ว ÷ เวลา
+        a = (v₂ - v₁) ÷ t
+        `;
+        
+        resolve(mockText);
+      };
+      
+      reader.onerror = () => reject(new Error('Failed to read PDF file'));
+      reader.readAsText(file); // This won't work for real PDFs
+    });
+  }
+
+  /**
+   * Split text into chunks with overlap
+   */
+  private static chunkText(text: string): Array<{
+    content: string;
+    pageNumber: number;
+    chunkIndex: number;
   }> {
+    const words = text.split(/\s+/);
+    const chunks = [];
+    let chunkIndex = 0;
+
+    for (let i = 0; i < words.length; i += this.CHUNK_SIZE - this.CHUNK_OVERLAP) {
+      const chunkWords = words.slice(i, i + this.CHUNK_SIZE);
+      const content = chunkWords.join(' ');
+      
+      if (content.trim().length > 0) {
+        chunks.push({
+          content: content.trim(),
+          pageNumber: Math.floor(i / 300) + 1, // Estimate page number
+          chunkIndex: chunkIndex++
+        });
+      }
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Get processing status for a book
+   */
+  static async getProcessingStatus(bookId: string): Promise<string | null> {
     try {
       const { data, error } = await supabase
-        .from('book_embeddings')
-        .select('content, page_number')
-        .eq('book_id', bookId);
+        .from('books')
+        .select('processing_status')
+        .eq('id', bookId)
+        .single();
 
-      if (error || !data) {
-        return { totalChunks: 0, avgChunkLength: 0, pagesCovered: 0 };
+      if (error) {
+        console.error('Error fetching processing status:', error);
+        return null;
       }
 
-      const totalChunks = data.length;
-      const avgChunkLength = data.reduce((sum, chunk) => sum + chunk.content.length, 0) / totalChunks;
-      const pagesCovered = new Set(data.map(chunk => chunk.page_number)).size;
-
-      return {
-        totalChunks,
-        avgChunkLength: Math.round(avgChunkLength),
-        pagesCovered
-      };
+      return data?.processing_status || null;
     } catch (error) {
-      console.error('Error getting processing stats:', error);
-      return { totalChunks: 0, avgChunkLength: 0, pagesCovered: 0 };
+      console.error('Error getting processing status:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Delete all embeddings for a book
+   */
+  static async deleteBookEmbeddings(bookId: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('book_embeddings')
+        .delete()
+        .eq('book_id', bookId);
+
+      if (error) {
+        console.error('Error deleting embeddings:', error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error deleting book embeddings:', error);
+      return false;
     }
   }
 }

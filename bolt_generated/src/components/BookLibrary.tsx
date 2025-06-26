@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Filter } from 'lucide-react';
+import { BookOpen, Filter, Loader, AlertCircle } from 'lucide-react';
 import BookCard from './BookCard';
+import { supabase } from '../lib/supabase';
 
 // อินเทอร์เฟซสำหรับข้อมูลหนังสือ
 interface Book {
@@ -22,78 +23,93 @@ interface BookLibraryProps {
 const BookLibrary: React.FC<BookLibraryProps> = ({ onBookSelect }) => {
   const [books, setBooks] = useState<Book[]>([]); // เก็บข้อมูลหนังสือทั้งหมด
   const [loading, setLoading] = useState(true); // สถานะโหลดข้อมูล
+  const [error, setError] = useState<string | null>(null); // สถานะ error
   const [selectedCategory, setSelectedCategory] = useState('all'); // หมวดหมู่ที่เลือก
+  const [categories, setCategories] = useState<Array<{id: string, name: string}>>([
+    { id: 'all', name: 'ทั้งหมด' }
+  ]); // หมวดหมู่ที่มีอยู่
 
-  // 🔗 BACKEND CONNECTION: ดึงข้อมูลหนังสือจาก Database หรือ API
+  // ดึงข้อมูลหนังสือจาก Supabase
   useEffect(() => {
-    const fetchBooks = async () => {
-      try {
-        // 👉 TODO: เปลี่ยน mockBooks ให้กลายเป็น fetch จริงจาก backend
-        const mockBooks: Book[] = [
-          {
-            id: '1',
-            title: 'วิทยาศาสตร์น่ารู้ ชั้นมัธยมศึกษาตอนต้น',
-            author: 'ดร.สมชาย วิทยาคม',
-            description: 'หนังสือวิทยาศาสตร์ที่อธิบายเรื่องราวต่างๆ ในธรรมชาติอย่างน่าสนใจ พร้อมการทดลองที่สามารถทำได้ที่บ้าน',
-            cover: '/api/placeholder/300/400', // 🔗 อาจเชื่อมกับ URL รูปจาก backend
-            rating: 4.8,
-            studentsCount: 1205,
-            category: 'science'
-          },
-          {
-            id: '2',
-            title: 'คณิตศาสตร์พื้นฐานเพื่อชีวิต',
-            author: 'อาจารย์สมหญิง เลขคณิต',
-            description: 'เรียนรู้คณิตศาสตร์ผ่านสถานการณ์จริงในชีวิตประจำวัน ทำให้เข้าใจง่ายและนำไปใช้ได้จริง',
-            cover: '/api/placeholder/300/400',
-            rating: 4.6,
-            studentsCount: 892,
-            category: 'math'
-          },
-          {
-            id: '3',
-            title: 'ประวัติศาสตร์ไทย เรื่องราวที่น่าทึ่ง',
-            author: 'ศาสตราจารย์พิมพ์ใจ ประวัติศาสตร์',
-            description: 'ค้นพบเรื่องราวที่น่าสนใจในประวัติศาสตร์ไทย ผ่านมุมมองใหม่ที่ทำให้เยาวชนหลงใหล',
-            cover: '/api/placeholder/300/400',
-            rating: 4.9,
-            studentsCount: 756,
-            category: 'history'
-          },
-          {
-            id: '4',
-            title: 'ภาษาอังกฤษเพื่อการสื่อสาร',
-            author: 'ครูสมใจ ภาษาดี',
-            description: 'เรียนรู้ภาษาอังกฤษผ่านสถานการณ์จริง พร้อมเทคนิคการฝึกฝนที่ได้ผลจริง',
-            cover: '/api/placeholder/300/400',
-            rating: 4.7,
-            studentsCount: 634,
-            category: 'language'
-          }
-        ];
-
-        // 🔗 MOCK: จำลองการโหลดข้อมูล ควรแทนที่ด้วย API เช่น fetch('/api/books')
-        setTimeout(() => {
-          setBooks(mockBooks);
-          setLoading(false);
-        }, 1000);
-      } catch (error) {
-        console.error('Error fetching books:', error);
-        setLoading(false);
-      }
-    };
-
     fetchBooks();
   }, []);
 
-  // ตัวเลือกหมวดหมู่
-  const categories = [
-    { id: 'all', name: 'ทั้งหมด' },
-    { id: 'science', name: 'วิทยาศาสตร์' },
-    { id: 'math', name: 'คณิตศาสตร์' },
-    { id: 'history', name: 'ประวัติศาสตร์' },
-    { id: 'language', name: 'ภาษา' }
-  ];
+  const fetchBooks = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // ดึงข้อมูลหนังสือที่ประมวลผลเสร็จแล้ว
+      const { data: booksData, error: booksError } = await supabase
+        .from('books')
+        .select('*')
+        .eq('processing_status', 'completed')
+        .order('created_at', { ascending: false });
+
+      if (booksError) throw booksError;
+
+      // ดึงข้อมูลจำนวนนักเรียนที่ใช้งานแต่ละหนังสือ
+      const booksWithStats = await Promise.all(
+        (booksData || []).map(async (book) => {
+          // นับจำนวน unique users ที่มี chat sessions กับหนังสือนี้
+          const { data: sessionsData, error: sessionsError } = await supabase
+            .from('chat_sessions')
+            .select('user_id')
+            .eq('book_id', book.id);
+
+          if (sessionsError) {
+            console.error('Error fetching sessions for book:', book.id, sessionsError);
+          }
+
+          const uniqueUsers = new Set(sessionsData?.map(session => session.user_id) || []).size;
+
+          return {
+            id: book.id,
+            title: book.title,
+            author: book.author,
+            description: book.description || 'ไม่มีคำอธิบาย',
+            cover: '/api/placeholder/300/400', // placeholder image
+            rating: 4.5, // default rating จนกว่าจะมีระบบ rating
+            studentsCount: uniqueUsers,
+            category: book.category
+          };
+        })
+      );
+
+      setBooks(booksWithStats);
+
+      // สร้างรายการหมวดหมู่จากข้อมูลที่ดึงมา
+      const uniqueCategories = [...new Set(booksWithStats.map(book => book.category))];
+      const categoryOptions = [
+        { id: 'all', name: 'ทั้งหมด' },
+        ...uniqueCategories.map(cat => ({
+          id: cat,
+          name: getCategoryDisplayName(cat)
+        }))
+      ];
+      setCategories(categoryOptions);
+
+    } catch (err) {
+      console.error('Error fetching books:', err);
+      setError('ไม่สามารถโหลดข้อมูลหนังสือได้ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // แปลงชื่อหมวดหมู่เป็นภาษาไทย
+  const getCategoryDisplayName = (category: string): string => {
+    const categoryMap: { [key: string]: string } = {
+      'science': 'วิทยาศาสตร์',
+      'math': 'คณิตศาสตร์',
+      'history': 'ประวัติศาสตร์',
+      'language': 'ภาษา',
+      'social': 'สังคมศึกษา',
+      'art': 'ศิลปะ',
+      'other': 'อื่นๆ'
+    };
+    return categoryMap[category] || category;
+  };
 
   // กรองหนังสือตามหมวดหมู่ที่เลือก
   const filteredBooks = selectedCategory === 'all' 
@@ -105,8 +121,27 @@ const BookLibrary: React.FC<BookLibraryProps> = ({ onBookSelect }) => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <BookOpen className="h-16 w-16 text-blue-600 animate-pulse mx-auto mb-4" />
-          <p className="text-gray-600">กำลังโหลดหนังสือ...</p>
+          <Loader className="h-16 w-16 text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">กำลังโหลดหนังสือจาก Supabase...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // แสดง error state
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">เกิดข้อผิดพลาด</h3>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={fetchBooks}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            ลองใหม่
+          </button>
         </div>
       </div>
     );
@@ -121,6 +156,9 @@ const BookLibrary: React.FC<BookLibraryProps> = ({ onBookSelect }) => {
           <p className="text-gray-600 max-w-2xl mx-auto">
             เลือกหนังสือที่คุณสนใจ แล้วใช้ AI ผู้ช่วยเพื่อเรียนรู้และทำความเข้าใจเนื้อหาอย่างลึกซึ้ง
           </p>
+          <div className="mt-4 text-sm text-blue-600">
+            📚 ข้อมูลจาก Supabase Database • {books.length} หนังสือ
+          </div>
         </div>
 
         {/* ตัวกรองหมวดหมู่ */}
@@ -147,21 +185,36 @@ const BookLibrary: React.FC<BookLibraryProps> = ({ onBookSelect }) => {
         </div>
 
         {/* แสดงรายการหนังสือแบบ grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredBooks.map((book) => (
-            <BookCard
-              key={book.id}
-              {...book}
-              onSelect={onBookSelect} // 🔗 BACKEND CONNECTION: ใช้ฟังก์ชันนี้เพื่อทำ action เช่น update ว่าผู้ใช้เริ่มอ่านเล่มไหน
-            />
-          ))}
-        </div>
-
-        {/* กรณีไม่มีหนังสือในหมวดหมู่ที่เลือก */}
-        {filteredBooks.length === 0 && (
+        {filteredBooks.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredBooks.map((book) => (
+              <BookCard
+                key={book.id}
+                {...book}
+                onSelect={onBookSelect}
+              />
+            ))}
+          </div>
+        ) : (
+          /* กรณีไม่มีหนังสือ */
           <div className="text-center py-12">
             <BookOpen className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">ไม่พบหนังสือในหมวดหมู่นี้</p>
+            {selectedCategory === 'all' ? (
+              <div>
+                <p className="text-gray-500 mb-2">ยังไม่มีหนังสือในระบบ</p>
+                <p className="text-sm text-gray-400">อาจารย์สามารถอัพโหลดหนังสือใหม่ได้</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-gray-500 mb-2">ไม่พบหนังสือในหมวดหมู่นี้</p>
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className="text-blue-600 hover:text-blue-800 text-sm"
+                >
+                  ดูหนังสือทั้งหมด
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
