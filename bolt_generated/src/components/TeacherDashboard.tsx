@@ -30,7 +30,30 @@ interface Book {
 const TeacherDashboard = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'books' | 'analytics'>('overview');
   const [showAddBookModal, setShowAddBookModal] = useState(false);
-  const [books, setBooks] = useState<Book[]>([  ]);
+  const [books, setBooks] = useState<Book[]>([
+    {
+      id: '1',
+      title: 'วิทยาศาสตร์น่ารู้ ชั้นมัธยมศึกษาตอนต้น',
+      author: 'ดร.สมชาย วิทยาคม',
+      category: 'science',
+      studentsCount: 1205,
+      chatsCount: 3420,
+      rating: 4.8,
+      status: 'active',
+      processingStatus: 'completed'
+    },
+    {
+      id: '2',
+      title: 'คณิตศาสตร์พื้นฐานเพื่อชีวิต',
+      author: 'อาจารย์สมหญิง เลขคณิต',
+      category: 'math',
+      studentsCount: 892,
+      chatsCount: 2156,
+      rating: 4.6,
+      status: 'active',
+      processingStatus: 'completed'
+    }
+  ]);
 
   const stats = {
     totalBooks: books.length,
@@ -41,23 +64,11 @@ const TeacherDashboard = () => {
     completedBooks: books.filter(book => book.processingStatus === 'completed').length
   };
 
-  const handleUploadComplete = async (bookId: string) => {
-    const { data: updatedBook } = await supabase
-      .from('books')
-      .select('*')
-      .eq('id', bookId)
-      .single();
-
-    if (updatedBook) {
-      setBooks((prevBooks) => [...prevBooks, {
-        ...updatedBook,
-        studentsCount: 0,
-        chatsCount: 0,
-        rating: 0
-      }]);
-    }
-
+  const handleUploadComplete = (bookId: string) => {
+    // Refresh books list or update the specific book
+    console.log('Book uploaded successfully:', bookId);
     setShowAddBookModal(false);
+    // In a real app, you would fetch the updated book data
   };
 
   const getStatusBadge = (status: string, processingStatus?: string) => {

@@ -65,6 +65,16 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
     }
 
     try {
+      //✅ Step 1: Get current user ID from Supabase
+      const {
+        data: { user },
+        error: userError
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error('ไม่สามารถดึงข้อมูลผู้ใช้ได้ กรุณาเข้าสู่ระบบใหม่');
+      }
+
       setUploadProgress({
         stage: 'uploading',
         message: 'กำลังสร้างข้อมูลหนังสือ...',
@@ -80,12 +90,12 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
           description: bookDescription,
           category: bookCategory,
           processing_status: 'pending',
-          created_by: 'current-user-id' // Replace with actual user ID
+          created_by: user.id
         })
         .select('id')
         .single();
 
-      if (bookError || !bookData) {
+      if (bookError) {
         throw new Error(`Failed to create book: ${bookError.message}`);
       }
 
@@ -97,41 +107,35 @@ const BookUploader: React.FC<BookUploaderProps> = ({ onUploadComplete, onClose }
         progress: 30
       });
 
-      // Process the PDF file & Save embeddings
-    const result = await TextbookProcessor.processPDFFile(
-      selectedFile,
-      bookId,
-      { title: bookTitle, author: bookAuthor }
-    );
+      // Process the PDF file
+      const result = await TextbookProcessor.processPDFFile(
+        selectedFile,
+        bookId,
+        { title: bookTitle, author: bookAuthor }
+      );
 
-    if (!result.success) {
-      throw new Error('การประมวลผลล้มเหลว');
+      if (result.success) {
+        setUploadProgress({
+          stage: 'completed',
+          message: `ประมวลผลสำเร็จ! สร้าง ${result.chunksProcessed} ส่วนข้อมูล`,
+          progress: 100
+        });
+
+        setTimeout(() => {
+          onUploadComplete(bookId);
+        }, 2000);
+      } else {
+        throw new Error(result.error || 'การประมวลผลล้มเหลว');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      setUploadProgress({
+        stage: 'error',
+        message: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการอัพโหลด',
+        progress: 0
+      });
     }
-
-    // 3. Update book status to "completed"
-    await supabase
-      .from('books')
-      .update({ processing_status: 'completed' })
-      .eq('id', bookId);
-
-    setUploadProgress({
-      stage: 'completed',
-      message: `ประมวลผลสำเร็จ! สร้าง ${result.chunksProcessed} ส่วนข้อมูล`,
-      progress: 100
-    });
-
-    setTimeout(() => {
-      onUploadComplete(bookId);
-    }, 2000);
-  } catch (error) {
-    console.error('Upload error:', error);
-    setUploadProgress({
-      stage: 'error',
-      message: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการอัพโหลด',
-      progress: 0
-    });
-  }
-};
+  };
 
   const resetForm = () => {
     setSelectedFile(null);

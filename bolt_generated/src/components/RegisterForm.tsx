@@ -1,67 +1,69 @@
 import React, { useState } from 'react';
 import { BookOpen, User, Lock, Mail, Eye, EyeOff, ArrowLeft } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+import bcrypt from 'bcryptjs';
+import { supabase } from '../lib/supabase';
 
-// กำหนด props ที่รับเข้ามาใน component นี้
+
 interface RegisterFormProps {
-  // ฟังก์ชันเรียกตอนสมัครสมาชิกสำเร็จ รับพารามิเตอร์ email, password, name และ role
-  onRegister: (email: string, password: string, name: string, role: 'teacher' | 'student') => void;
-  // ฟังก์ชันเรียกตอนกดปุ่มกลับไปหน้า login
+  onRegister: (email: string, password: string, name: string, role: 'teacher' | 'student') => Promise<void>;
   onBackToLogin: () => void;
-  // สถานะโหลด ใช้สำหรับปิดการกดปุ่มสมัครขณะรอโหลด
   isLoading: boolean;
 }
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onRegister, onBackToLogin, isLoading }) => {
-  // สร้าง state เพื่อเก็บข้อมูลในฟอร์มทั้งหมด
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<'teacher' | 'student'>('student'); // กำหนดค่าเริ่มต้นเป็น student
-  const [showPassword, setShowPassword] = useState(false); // สถานะแสดง/ซ่อนรหัสผ่าน
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false); // สถานะแสดง/ซ่อนยืนยันรหัสผ่าน
-  const [errors, setErrors] = useState<{ [key: string]: string }>({}); // เก็บข้อความ error ของแต่ละฟิลด์
+  
+  const [role, setRole] = useState<'teacher' | 'student'>('student');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
-  // ฟังก์ชันตรวจสอบความถูกต้องของข้อมูลฟอร์ม
   const validateForm = () => {
     const newErrors: { [key: string]: string } = {};
-
-    // เช็คว่าชื่อไม่ว่างเปล่า
-    if (!name.trim()) {
-      newErrors.name = 'กรุณากรอกชื่อ-นามสกุล';
-    }
-
-    // เช็คว่าอีเมลไม่ว่าง และเป็นรูปแบบอีเมลที่ถูกต้อง
+    if (!name.trim()) newErrors.name = 'กรุณากรอกชื่อ-นามสกุล';
     if (!email.trim()) {
       newErrors.email = 'กรุณากรอกอีเมล';
     } else if (!/\S+@\S+\.\S+/.test(email)) {
       newErrors.email = 'รูปแบบอีเมลไม่ถูกต้อง';
     }
-
-    // เช็ครหัสผ่านไม่ว่าง และมีความยาวอย่างน้อย 6 ตัวอักษร
     if (!password) {
       newErrors.password = 'กรุณากรอกรหัสผ่าน';
     } else if (password.length < 6) {
       newErrors.password = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
     }
-
-    // เช็ครหัสผ่านยืนยันตรงกับรหัสผ่านหรือไม่
     if (password !== confirmPassword) {
       newErrors.confirmPassword = 'รหัสผ่านไม่ตรงกัน';
     }
-
-    // อัพเดต error state
     setErrors(newErrors);
-    // คืนค่า true ถ้าไม่มี error เลย (ผ่าน validation)
     return Object.keys(newErrors).length === 0;
   };
 
-  // ฟังก์ชันจัดการ submit ฟอร์ม
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault(); // ป้องกันการ reload หน้า
-    if (validateForm()) {
-      // ถ้าข้อมูลถูกต้อง ให้เรียก onRegister (ส่งข้อมูลไปให้ backend หรือ component แม่)
-      onRegister(email, password, name, role);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateForm()) return;
+
+    const id = uuidv4();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const { error } = await supabase.from('users').insert([{
+      id,
+      username: name,
+      email,
+      password_hash: hashedPassword,
+      role,
+      created_at: new Date().toISOString(),
+    }]);
+
+    if (error) {
+      alert('เกิดข้อผิดพลาดระหว่างสมัครสมาชิก: ' + error.message);
+      console.error(error);
+    } else {
+      alert('สมัครสมาชิกสำเร็จ! โปรดเข้าสู่ระบบ');
+      onBackToLogin();
     }
   };
 

@@ -1,25 +1,23 @@
-// นำเข้า React hooks และไอคอนจาก lucide-react
 import React, { useState } from 'react';
-import { BookOpen, User, Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { BookOpen, Lock, Mail, Eye, EyeOff } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import bcrypt from 'bcryptjs';
 
-// กำหนด props ของ LoginForm component
 interface LoginFormProps {
   onLogin: (email: string, password: string, role: 'teacher' | 'student') => void;
   onShowRegister: () => void;
-  isLoading: boolean; // สำหรับแสดง spinner ระหว่างรอ login
+  isLoading: boolean;
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoading }) => {
-  // State สำหรับ input form
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'teacher' | 'student'>('student'); // ค่า default เป็น student
-  const [showPassword, setShowPassword] = useState(false); // toggle แสดงรหัสผ่าน
+  const [role, setRole] = useState<'teacher' | 'student'>('student');
+  const [showPassword, setShowPassword] = useState(false); 
 
-  // ฟังก์ชันเมื่อ submit form
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault(); // ป้องกัน reload หน้า
-    onLogin(email, password, role); // เรียกใช้ callback ที่ส่งมาจาก parent
+    e.preventDefault();
+    onLogin(email, password, role);
   };
 
   return (
@@ -100,7 +98,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoadin
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <input
                   id="password"
-                  type={showPassword ? 'text' : 'password'} // toggle แสดงรหัสผ่าน
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
@@ -128,7 +126,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoadin
                 } ${isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-lg transform hover:-translate-y-0.5'}`}
             >
               {isLoading ? (
-                // แสดง spinner ขณะรอโหลด
                 <div className="flex items-center justify-center space-x-2">
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   <span>กำลังเข้าสู่ระบบ...</span>
@@ -139,7 +136,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoadin
             </button>
           </form>
 
-          {/* ปุ่มลิงก์ไปสมัครสมาชิก */}
+          {/* ลิงก์สมัครสมาชิก */}
           <div className="mt-6 text-center">
             <p className="text-sm text-gray-600">
               ยังไม่มีบัญชี?{' '}
@@ -152,7 +149,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoadin
             </p>
           </div>
 
-          {/* แสดงข้อมูลบัญชีทดสอบ */}
+          {/* ข้อมูลทดสอบ */}
           <div className="mt-6 p-4 bg-gray-50 rounded-lg">
             <p className="text-sm text-gray-600 mb-2 font-medium">ข้อมูลทดสอบ:</p>
             <div className="text-xs text-gray-500 space-y-1">
@@ -162,7 +159,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onShowRegister, isLoadin
           </div>
         </div>
 
-        {/* หมายเหตุเกี่ยวกับการเชื่อมต่อ API */}
         <div className="text-center">
           <p className="text-xs text-gray-500">
             🔗 เชื่อมต่อกับ Authentication API สำหรับการยืนยันตัวตน
