@@ -103,7 +103,7 @@ const Dashboard = () => {
         totalBooks: booksData?.length || 0,
         totalStudents: uniqueUsers,
         totalChats: messageCount || 0,
-        averageRating: 4.7 // Default until we implement ratings
+        averageRating: 0 // Default until we implement ratings
       });
 
       setPopularBooks(popularBooksArray);
@@ -199,7 +199,7 @@ const Dashboard = () => {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">คะแนนเฉลี่ย</p>
+                <p className="text-sm font-medium text-gray-600">คะแนนเฉลี่ยนักเรียนในห้อง</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.averageRating}</p>
               </div>
               <div className="bg-yellow-100 p-3 rounded-full">
@@ -213,7 +213,7 @@ const Dashboard = () => {
         <div className="bg-gradient-to-r from-blue-600 to-teal-600 text-white p-6 rounded-xl shadow-lg mb-8">
           <div className="flex items-center space-x-3 mb-4">
             <BarChart3 className="h-8 w-8" />
-            <h3 className="text-xl font-bold">🔗 จุดเชื่อมต่อ Backend/Database</h3>
+            <h3 className="text-xl font-bold">🔗 อธิบายฟีเจอร์ใหม่!</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div className="bg-white bg-opacity-20 p-4 rounded-lg">
